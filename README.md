@@ -2,6 +2,10 @@
 
 [Português](#português) · [English](#english)
 
+![Simulação ampliada da tela do M5Dial com mapa de Franca/SIMK e voos do Radar MeuLab](docs/simulator-preview.png)
+
+*Simulação da interface 240 × 240 px, ampliada para visualização. / Enlarged preview of the 240 × 240 px interface.*
+
 ## Português
 
 Firmware de radar de aeronaves para **M5Dial**. Consulta o feed público de [Radar MeuLab](https://radar.meulab.fun/) em `https://radar.meulab.fun/data/aircraft.json` a cada 15 segundos e mostra voos sobre mapa escuro de Franca/SIMK numa tela circular de 240 × 240 px. O encoder e o botão permitem consultar aeronaves sem celular ou computador.
