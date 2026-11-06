@@ -31,6 +31,8 @@ pio device monitor --port /dev/cu.usbmodem2101 --baud 115200
 
 Troque a porta serial conforme seu sistema. No Linux, geralmente `/dev/ttyACM0`; no Windows, `COM3` ou similar. A primeira compilação baixa as bibliotecas declaradas em `platformio.ini`.
 
+Se o upload não conectar, desligue USB, segure **G0** no módulo StampS3 atrás do Dial, reconecte USB e solte G0. A tela fica apagada no modo de gravação. Após upload, desligue e reconecte USB **sem** segurar G0 para iniciar o aplicativo. [Guia M5Stack](https://docs.m5stack.com/en/core/Dial).
+
 ### Uso
 
 Gire o dial para escolher aeronave, ordenadas por distância. Toque na tela ou pressione o botão para abrir ou fechar detalhes. Segure o botão por 1,2 segundo para atualizar. O aro indica estado do Wi-Fi/feed e o ponto no aro indica direção da aeronave em relação ao radar. Se o feed falhar, a última leitura continua visível com alerta e idade dos dados.
@@ -88,6 +90,8 @@ pio device monitor --port /dev/cu.usbmodem2101 --baud 115200
 ```
 
 Replace the serial port for your system. Linux commonly uses `/dev/ttyACM0`; Windows uses `COM3` or similar. The first build downloads libraries declared in `platformio.ini`.
+
+If upload cannot connect, unplug USB, hold **G0** on the StampS3 module behind the Dial, reconnect USB, then release G0. The screen stays blank in download mode. After upload, unplug and reconnect USB **without** holding G0 to start the app. [M5Stack guide](https://docs.m5stack.com/en/core/Dial).
 
 ### Use
 
