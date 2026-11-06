@@ -4,6 +4,7 @@
 #include <M5Dial.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include "map_franca.h"
 #include "secrets.h"
 
 namespace {
@@ -18,6 +19,9 @@ constexpr uint16_t WHITE = 0xF7BE;
 constexpr uint16_t MUTED = 0x9473;
 constexpr uint16_t ORANGE = 0xFBA9;
 constexpr uint16_t RED = 0xF38B;
+constexpr uint16_t GRID = 0x1A6B;
+constexpr float MAP_PX_PER_NM = 0.60f;
+constexpr float MAP_RANGE_NM = 160.0f;
 
 struct Aircraft {
   String call;
@@ -65,12 +69,106 @@ void put(const String& s, int x, int y, int size, uint16_t color, textdatum_t da
   d.drawString(s, x, y);
 }
 
+void putClear(const String& s, int x, int y, uint16_t color) {
+  auto& d = spriteOK ? static_cast<lgfx::LGFXBase&>(*canvas) : static_cast<lgfx::LGFXBase&>(M5Dial.Display);
+  d.setFont(&fonts::Font0);
+  d.setTextDatum(middle_center);
+  d.setTextSize(1);
+  d.setTextColor(color);
+  d.drawString(s, x, y);
+}
+
+void planeMarker(lgfx::LGFXBase& d, const Aircraft& p, bool active) {
+  if (p.distance < 0 || p.bearing < 0 || p.distance > MAP_RANGE_NM) return;
+  float bearing = p.bearing * DEG_TO_RAD;
+  int x = 120 + sinf(bearing) * p.distance * MAP_PX_PER_NM;
+  int y = 120 - cosf(bearing) * p.distance * MAP_PX_PER_NM;
+  float heading = (p.track >= 0 ? p.track : p.bearing) * DEG_TO_RAD;
+  float dx = sinf(heading), dy = -cosf(heading);
+  float sideX = -dy, sideY = dx;
+  int length = active ? 7 : 5;
+  uint16_t color = active ? RED : CYAN;
+  if (active) d.drawCircle(x, y, 10, RED);
+  d.fillTriangle(x + dx * length, y + dy * length,
+                 x - dx * length * .6f + sideX * length * .55f,
+                 y - dy * length * .6f + sideY * length * .55f,
+                 x - dx * length * .6f - sideX * length * .55f,
+                 y - dy * length * .6f - sideY * length * .55f, color);
+}
+
+void drawRadar(lgfx::LGFXBase& d, bool stale, uint16_t status, uint32_t age) {
+  d.fillScreen(BG);
+  d.drawPng(MAP_FRANCA_PNG, MAP_FRANCA_PNG_SIZE, 0, 0);
+  d.drawCircle(120, 120, 117, status);
+  d.drawCircle(120, 120, 96, GRID);
+  d.drawCircle(120, 120, 60, GRID);
+  d.drawCircle(120, 120, 30, GRID);
+  d.drawFastHLine(28, 120, 184, GRID);
+  d.drawFastVLine(120, 38, 164, GRID);
+  // Subtle moving radar sweep, underneath aircraft markers.
+  int sweep = (millis() / 90) % 360;
+  for (int offset = 0; offset < 15; offset += 3) {
+    float a = (sweep - offset - 90) * DEG_TO_RAD;
+    uint16_t shade = offset == 0 ? 0x278E : 0x13EA;
+    d.drawLine(120, 120, 120 + cosf(a) * 95, 120 + sinf(a) * 95, shade);
+  }
+  d.fillCircle(120, 120, 3, WHITE);
+  putClear("SIMK", 139, 127, WHITE);
+  d.fillCircle(102, 93, 2, MUTED);
+  putClear("UBERABA", 83, 85, MUTED);
+  d.fillCircle(106, 144, 2, MUTED);
+  putClear("RIB. PRETO", 149, 150, MUTED);
+
+  for (size_t i = 0; i < count; ++i) if (i != selected) planeMarker(d, planes[i], false);
+  if (count) planeMarker(d, planes[selected], true);
+
+  d.fillRoundRect(43, 15, 154, 37, 9, BG);
+  d.drawRoundRect(43, 15, 154, 37, 9, PANEL);
+  putClear("MEULAB RADAR  /  SIMK", 120, 27, WHITE);
+  d.fillCircle(183, 27, 3, status);
+  putClear(String(count) + " VOOS  /  160 NM", 120, 42, CYAN);
+
+  if (!count) {
+    String msg = !online ? "SEM WI-FI" : (errorText.length() ? "FALHA FEED" : (!feedOK ? "AGUARDE" : "CEU LIVRE"));
+    String sub = !online ? "Reconectando..." : (errorText.length() ? errorText : (!feedOK ? "Buscando aeronaves" : "Nenhum voo no alcance"));
+    d.fillRoundRect(36, 88, 168, 48, 10, BG);
+    d.drawRoundRect(36, 88, 168, 48, 10, PANEL);
+    put(msg, 120, 103, 2, WHITE);
+    putClear(sub.substring(0, 24), 120, 124, MUTED);
+  } else {
+    const Aircraft& p = planes[selected];
+    d.fillRoundRect(28, 170, 184, 53, 12, BG);
+    d.drawRoundRect(28, 170, 184, 53, 12, CYAN);
+    String call = p.call.length() ? p.call : p.hex;
+    if (call.length() > 10) call = call.substring(0, 10);
+    put(call, 120, 182, 2, RED);
+    String meta = (p.type.length() ? p.type : "--") + String("  /  ") +
+      (p.distance >= 0 ? String(p.distance, 1) : String("--")) + " NM";
+    put(meta, 120, 198, 1, WHITE);
+    String values = (p.altitude >= 0 ? String(p.altitude) : String("--")) + " FT    " +
+      (p.speed >= 0 ? String(p.speed, 0) : String("--")) + " KT";
+    put(values, 120, 211, 1, MUTED);
+  }
+  if (stale) {
+    String state = !online ? "SEM WI-FI" : "DADOS ANTIGOS";
+    if (lastSuccess) state += " " + String(age) + "s";
+    d.fillRoundRect(56, 225, 128, 13, 5, BG);
+    putClear(state, 120, 231, status);
+  }
+}
+
 void draw() {
   auto& d = spriteOK ? static_cast<lgfx::LGFXBase&>(*canvas) : static_cast<lgfx::LGFXBase&>(M5Dial.Display);
   d.fillScreen(BG);
   uint32_t age = lastSuccess ? (millis() - lastSuccess) / 1000 : 0;
   bool stale = !feedOK || !lastSuccess || age > 45;
   uint16_t status = !online ? RED : (stale ? ORANGE : CYAN);
+  if (!showDetail) {
+    drawRadar(d, stale, status, age);
+    if (spriteOK) canvas->pushSprite(0, 0);
+    lastDraw = millis();
+    return;
+  }
   d.drawCircle(120, 120, 117, status);
   d.drawCircle(120, 120, 116, PANEL);
   for (int deg = 0; deg < 360; deg += 15) {
