@@ -1,0 +1,55 @@
+name: firmware
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            .pio/libdeps
+          key: pio-m5dial-${{ hashFiles('platformio.ini') }}
+      - run: pip install platformio
+      - run: cp include/secrets.example.h include/secrets.h
+      - run: pio run -e m5dial
+
+  sim:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sim
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            sim/.pio/libdeps
+          key: pio-sim-${{ hashFiles('sim/platformio.ini') }}
+      - run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - run: pip install platformio pillow
+      - run: pio run -e sim -e sim-live
+      - name: Render scenarios
+        run: |
+          mkdir -p out
+          .pio/build/sim/program fixtures/aircraft.json out
+      - name: Compare against baseline
+        run: python3 -I compare.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim-renders
+          path: sim/out/
+          if-no-files-found: warn

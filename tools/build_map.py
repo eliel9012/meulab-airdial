@@ -1,11 +1,20 @@
-"""Render a dark 240px Franca basemap from an Overpass JSON extract.
+"""Render dark 240px Franca basemaps (one per radar range) from Overpass extracts.
 
-Usage: python tools/build_map.py path/to/overpass.json
-Data: © OpenStreetMap contributors, ODbL. See https://www.openstreetmap.org/copyright
+Usage:
+  python tools/build_map.py fetch  [--cache DIR] [--levels 160,80,40,20] [--force]
+  python tools/build_map.py render [--cache DIR] [--levels ...]   # PNGs + include/map_layers.h
+  python tools/build_map.py header                                # map_layers.h from assets/map_<n>.png
+Ranges are 160/80/40/20 NM; the 96 px radar radius equals the range, so px_per_nm = 96 / range.
+Data: (c) OpenStreetMap contributors, ODbL. See https://www.openstreetmap.org/copyright
 """
+import argparse
 import json
 import math
 import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -14,18 +23,113 @@ SIZE = 240
 SCALE = 3
 LAT = -20.512504
 LON = -47.400830
-PX_PER_NM = 0.60  # 160 NM is 96 px
+RADIUS_PX = 96
+MARGIN_PX = 24  # extra bbox around the 240 px square so lines enter from off-screen
+ROOT = Path(__file__).resolve().parents[1]
+LAYERS_HEADER = ROOT / "include" / "map_layers.h"
+DEFAULT_CACHE = Path("/private/tmp/claude-501/-Users-eliel/b0ba4f55-55f0-4852-bd78-e6ff244e86c3/scratchpad")
+ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
+LEVELS = [160, 80, 40, 20]
+HIGHWAYS = {
+    160: ["motorway", "trunk", "primary"],
+    80: ["motorway", "trunk", "primary", "secondary"],
+    40: ["motorway", "trunk", "primary", "secondary", "tertiary", "residential"],  # residential = town texture
+    20: ["motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential"],
+}
+# Per level: (highway, colour, width in output px), drawn in order (minor first).
+# *_link ways are drawn with their parent style.
+STYLES = {
+    160: [
+        ("primary", (17, 48, 68), 1),
+        ("trunk", (25, 65, 87), 2),
+        ("motorway", (31, 75, 100), 2),
+    ],
+    80: [
+        ("secondary", (14, 40, 60), 1),
+        ("primary", (17, 48, 68), 1),
+        ("trunk", (25, 65, 87), 2),
+        ("motorway", (31, 75, 100), 2),
+    ],
+    40: [
+        ("residential", (26, 64, 88), 0.34),
+        ("tertiary", (12, 36, 54), 1),
+        ("secondary", (14, 40, 59), 1),
+        ("primary", (19, 52, 73), 1.5),
+        ("trunk", (25, 65, 87), 2),
+        ("motorway", (31, 75, 100), 2),
+    ],
+    20: [
+        ("residential", (28, 70, 96), 0.67),
+        ("unclassified", (13, 38, 56), 0.67),
+        ("tertiary", (12, 35, 53), 1),
+        ("secondary", (15, 43, 62), 1.33),
+        ("primary", (19, 52, 73), 1.67),
+        ("trunk", (25, 65, 87), 2),
+        ("motorway", (31, 75, 100), 2.33),
+    ],
+}
 
 
-def project(point):
-    x = 120 + (point["lon"] - LON) * 56.2 * PX_PER_NM
-    y = 120 - (point["lat"] - LAT) * 60.0 * PX_PER_NM
-    return round(x * SCALE), round(y * SCALE)
+def px_per_nm(level):
+    return RADIUS_PX / level
 
 
-def main(source):
-    elements = json.loads(Path(source).read_text())["elements"]
-    n = SIZE * SCALE
+def bbox(level):
+    """(south, west, north, east) covering the 240 px square plus margin."""
+    half = SIZE / 2 + MARGIN_PX
+    ppn = px_per_nm(level)
+    dlat = half / (60.0 * ppn)
+    dlon = half / (56.2 * ppn)
+    return LAT - dlat, LON - dlon, LAT + dlat, LON + dlon
+
+
+def cache_file(cache, level):
+    return Path(cache) / f"overpass_{level}.json"
+
+
+def overpass_query(level):
+    s, w, n, e = bbox(level)
+    names = "|".join(HIGHWAYS[level])
+    return (
+        "[out:json][timeout:180];"
+        f'way["highway"~"^({names})(_link)?$"]({s:.5f},{w:.5f},{n:.5f},{e:.5f});'
+        "out geom;"
+    )
+
+
+def fetch(cache, levels, force=False):
+    cache = Path(cache)
+    cache.mkdir(parents=True, exist_ok=True)
+    for level in levels:
+        out = cache_file(cache, level)
+        if out.exists() and not force:
+            print(f"{level}: cached {out}")
+            continue
+        data = urllib.parse.urlencode({"data": overpass_query(level)}).encode()
+        body = None
+        for attempt in range(8):
+            endpoint = ENDPOINTS[attempt % len(ENDPOINTS)]
+            try:
+                req = urllib.request.Request(endpoint, data=data, headers={"User-Agent": "meulab-airdial build_map.py"})
+                with urllib.request.urlopen(req, timeout=240) as resp:
+                    body = resp.read()
+                json.loads(body)  # validate
+                break
+            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as err:
+                wait = min(120, 10 * 2 ** attempt)
+                print(f"{level}: {endpoint} failed ({err}); retry in {wait}s", file=sys.stderr)
+                time.sleep(wait)
+        if body is None:
+            sys.exit(f"{level}: Overpass fetch failed")
+        out.write_bytes(body)
+        print(f"{level}: {len(json.loads(body)['elements'])} ways -> {out} ({len(body)} bytes)")
+        time.sleep(5)  # be polite between sequential queries
+
+
+def background(n):
     bg = Image.new("RGB", (n, n))
     pixels = bg.load()
     for y in range(n):
@@ -33,35 +137,102 @@ def main(source):
             radius = math.hypot(x - n / 2, y - n / 2) / (n / 2)
             glow = max(0, 1 - radius)
             pixels[x, y] = (5, int(17 + glow * 10), int(30 + glow * 18))
+    return bg
 
-    styles = [
-        ("primary", (17, 48, 68), 1),
-        ("trunk", (25, 65, 87), 2),
-        ("motorway", (31, 75, 100), 2),
-    ]
+
+def render_level(elements, level):
+    n = SIZE * SCALE
+    ppn = px_per_nm(level)
+
+    def project(point):
+        x = 120 + (point["lon"] - LON) * 56.2 * ppn
+        y = 120 - (point["lat"] - LAT) * 60.0 * ppn
+        return round(x * SCALE), round(y * SCALE)
+
     road = Image.new("RGB", (n, n), (0, 0, 0))
     draw = ImageDraw.Draw(road)
-    for highway, color, width in styles:
+    counts = {}
+    for highway, color, width in STYLES[level]:
         for element in elements:
-            if element.get("tags", {}).get("highway") != highway:
+            tag = element.get("tags", {}).get("highway", "")
+            if tag != highway and tag != highway + "_link":
                 continue
             geometry = element.get("geometry")
             if geometry and len(geometry) > 1:
-                draw.line([project(p) for p in geometry], fill=color, width=width * SCALE, joint="curve")
+                draw.line([project(p) for p in geometry], fill=color, width=max(1, round(width * SCALE)), joint="curve")
+                counts[highway] = counts.get(highway, 0) + 1
     mask = road.convert("L").point(lambda value: min(255, value * 4))
     glow = road.filter(ImageFilter.GaussianBlur(6 * SCALE))
-    bg = Image.blend(bg, glow, 0.11)
+    bg = Image.blend(background(n), glow, 0.11)
     bg.paste(road, (0, 0), mask)
-    bg = bg.resize((SIZE, SIZE), Image.Resampling.LANCZOS)
-    out = Path(__file__).resolve().parents[1] / "assets" / "map_franca.png"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    bg.save(out, optimize=True)
-    header = Path(__file__).resolve().parents[1] / "include" / "map_franca.h"
-    data = out.read_bytes()
-    rows = [", ".join(f"0x{byte:02x}" for byte in data[i:i + 16]) for i in range(0, len(data), 16)]
-    header.write_text("#pragma once\n#include <stdint.h>\nconst uint8_t MAP_FRANCA_PNG[] PROGMEM = {\n  " + ",\n  ".join(rows) + "\n};\nconst uint32_t MAP_FRANCA_PNG_SIZE = sizeof(MAP_FRANCA_PNG);\n")
-    print(out, len(data), "bytes")
+    return bg.resize((SIZE, SIZE), Image.Resampling.LANCZOS), counts
+
+
+def rgb565_values(png_path):
+    im = Image.open(png_path).convert("RGB")
+    if im.size != (SIZE, SIZE):
+        raise ValueError(f"{png_path} is {im.size}, expected {SIZE}x{SIZE}")
+    return [((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3) for r, g, b in zip(*[iter(im.tobytes())] * 3)]
+
+
+def array_lines(name, values):
+    lines = [f"const uint16_t {name}[{SIZE} * {SIZE}] PROGMEM = {{"]
+    for i in range(0, len(values), 12):
+        lines.append("  " + ", ".join(f"0x{v:04X}" for v in values[i:i + 12]) + ",")
+    lines.append("};")
+    return lines
+
+
+HEADER_PREAMBLE = [
+    "#pragma once",
+    "#include <stdint.h>",
+    "// Generated by tools/build_map.py. Map data (c) OpenStreetMap contributors, ODbL.",
+]
+
+
+def write_layers_header(levels=LEVELS):
+    lines = list(HEADER_PREAMBLE) + ["#ifndef PROGMEM", "#define PROGMEM", "#endif"]
+    for level in levels:
+        lines += array_lines(f"MAP_RGB565_{level}", rgb565_values(ROOT / "assets" / f"map_{level}.png"))
+    LAYERS_HEADER.parent.mkdir(parents=True, exist_ok=True)
+    LAYERS_HEADER.write_text("\n".join(lines) + "\n")
+    print(LAYERS_HEADER, LAYERS_HEADER.stat().st_size, "bytes")
+
+
+def render(cache, levels):
+    for level in levels:
+        src = cache_file(cache, level)
+        if not src.exists():
+            sys.exit(f"missing {src}; run: python tools/build_map.py fetch --cache {cache}")
+        elements = json.loads(src.read_text())["elements"]
+        image, counts = render_level(elements, level)
+        out = ROOT / "assets" / f"map_{level}.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        image.save(out, optimize=True)
+        print(f"{level}: {out} {out.stat().st_size} bytes, ways drawn {counts}")
+    write_layers_header(LEVELS)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("command", choices=["fetch", "render", "header"])
+    parser.add_argument("cache_dir", nargs="?", help="cache dir (same as --cache)")
+    parser.add_argument("--cache", default=None)
+    parser.add_argument("--levels", default=",".join(map(str, LEVELS)))
+    parser.add_argument("--force", action="store_true", help="re-download even if cached")
+    args = parser.parse_args()
+    cache = Path(args.cache or args.cache_dir or DEFAULT_CACHE)
+    levels = [int(v) for v in args.levels.split(",")]
+    for level in levels:
+        if level not in HIGHWAYS:
+            sys.exit(f"unknown level {level}; choose from {LEVELS}")
+    if args.command == "fetch":
+        fetch(cache, levels, args.force)
+    elif args.command == "render":
+        render(cache, levels)
+    else:
+        write_layers_header(LEVELS)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main()

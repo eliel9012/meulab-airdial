@@ -1,0 +1,4 @@
+.pio/
+out/
+aircraft.json
+out-full/

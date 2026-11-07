@@ -39,9 +39,36 @@ Se o upload não conectar, desligue USB, segure **G0** no módulo StampS3 atrás
 
 ### Uso
 
-Gire o dial para escolher aeronave, ordenadas por distância. Toque na tela ou pressione o botão para abrir ou fechar detalhes. Segure o botão por 1,2 segundo para atualizar. O aro indica estado do Wi-Fi/feed; o marcador coral mostra a aeronave selecionada no mapa. Se o feed falhar, a última leitura continua visível com alerta e idade dos dados.
+| Gesto | Ação |
+|---|---|
+| Girar | escolhe aeronave (dois tics = deu a volta na lista) |
+| Toque | radar ↔ detalhes |
+| Dois toques | liga/desliga som |
+| Clique curto | radar → detalhes → estatísticas do dia |
+| Segurar + girar (radar) | zoom: 160 → 80 → 40 → 20 NM (horário aproxima) |
+| Segurar + girar (detalhes) | ordem: perto, altitude, recentes |
+| Segurar 1,2 s | atualiza agora |
+| Segurar 5 s | abre portal Wi-Fi `MeuLab-AirDial` (192.168.4.1) |
 
-Mapa principal: vias reais de Franca em azul, anéis de alcance até **160 NM**, aeronaves ciano e aeronave selecionada coral. Os símbolos usam `r_dst`, `r_dir` e `track` do feed. O mapa geográfico é embarcado no firmware; funciona sem baixar tiles no M5Dial. Dados cartográficos: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), ODbL. `assets/map_franca.png` e `include/map_franca.h` são gerados por `tools/build_map.py` a partir de uma extração Overpass JSON.
+- **Mapa:** vias reais em azul (mais detalhe a cada zoom), anéis em 1/4, 1/2 e alcance total, cidades e SIMK. Cor da aeronave = altitude: cinza no solo, verde < 10.000 ft, ciano até 25.000 ft, lilás acima. Selecionada em coral, com rastro das últimas posições. Fora do alcance, vira seta na borda.
+- **Painéis:** somem após 8 s sem uso; o indicativo da selecionada fica junto ao marcador. Qualquer gesto traz de volta. O cartão vai para o lado oposto ao voo selecionado, para não cobri-lo.
+- **Alertas:** squawk 7500/7600/7700 ou campo `emergency` pisca em vermelho, seleciona o voo e apita. Voo que entra a menos de 10 NM de Franca gera aviso "PRÓXIMO".
+- **Militares:** `dbFlags` do readsb. Militar em dourado (com aviso "MILITAR" ao aparecer), "interessante" em magenta.
+- **Detalhes:** indicativo, registro, tipo, modelo por extenso, altitude, velocidade, razão vertical, squawk, rumo e distância.
+- **Estatísticas:** voos únicos do dia, mais longe, mais alto, companhia mais frequente e militares. Zera à meia-noite.
+- **Relógio:** após 60 s parado, sem voos no alcance ou à noite (22h–7h), mostra hora e voos do dia. Qualquer gesto volta ao radar.
+- **Sons:** tic curto no giro, tom do zoom sobe ao aproximar, ding-dong para "PRÓXIMO", sirene em emergência (repete até tocar na tela), tom grave quando o feed cai. Silêncio das 22h às 7h, menos emergência. Som, zoom e ordem ficam salvos.
+- **OTA:** com `OTA_PASSWORD` em `include/secrets.h`, grave pelo Wi-Fi: `AIRDIAL_OTA_PASSWORD=... pio run -e m5dial-ota -t upload`.
+- **Brilho:** menor à noite (19h–6h, horário por NTP) e após 3 min sem uso.
+- **Wi-Fi:** usa `include/secrets.h` ou a rede já salva no aparelho. Sem conexão por 60 s após ligar, abre o portal de configuração sozinho.
+- **Fonte:** Source Serif 4 (SIL OFL 1.1) suavizada, gerada por `tools/build_fonts.py`.
+- O aro indica estado do Wi-Fi/feed. Se o feed falhar, a última leitura continua visível com a idade dos dados.
+
+Mapas embarcados no firmware (sem tiles online). Dados cartográficos: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), ODbL. `assets/map_*.png` e `include/map_layers.h` são gerados por `tools/build_map.py` a partir do Overpass.
+
+### Simulador
+
+`sim/` compila o `src/main.cpp` real no computador (M5GFX + SDL2) e gera prints de cada estado da UI, ou abre uma janela interativa. Veja [sim/README.md](sim/README.md).
 
 O feed fornece indicativo, registro, tipo, altitude, velocidade, rumo e distância quando disponíveis. Campos ausentes aparecem como traços; nem toda aeronave transmite todos eles. A distância `r_dst` vem em milhas náuticas. A conexão HTTPS lê dados públicos sem validar certificado; não envie credenciais ou outros dados privados para esse endpoint.
 
@@ -101,9 +128,36 @@ If upload cannot connect, unplug USB, hold **G0** on the StampS3 module behind t
 
 ### Use
 
-Turn the dial to select aircraft, ordered by distance. Tap the screen or press the button to open or close details. Hold the button for 1.2 seconds to refresh. The outer ring shows Wi-Fi/feed state; the coral marker shows the selected aircraft on the map. If the feed fails, the last result stays visible with a stale warning and data age.
+| Gesture | Action |
+|---|---|
+| Turn | select aircraft (double tick = wrapped around) |
+| Tap | radar ↔ details |
+| Double tap | sound on/off |
+| Short click | radar → details → daily stats |
+| Hold + turn (radar) | zoom: 160 → 80 → 40 → 20 NM (clockwise zooms in) |
+| Hold + turn (details) | sort: nearest, altitude, newest |
+| Hold 1.2 s | refresh now |
+| Hold 5 s | open Wi-Fi portal `MeuLab-AirDial` (192.168.4.1) |
 
-Main map: real Franca roads in blue, range rings up to **160 NM**, cyan aircraft, and a coral selected aircraft. Markers use `r_dst`, `r_dir`, and `track` from the feed. The geographic basemap ships in the firmware, so the M5Dial does not download map tiles. Map data: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), ODbL. `assets/map_franca.png` and `include/map_franca.h` are generated by `tools/build_map.py` from an Overpass JSON extract.
+- **Map:** real roads in blue (more detail per zoom level), rings at 1/4, 1/2 and full range, towns and SIMK. Aircraft color = altitude: gray on ground, green < 10,000 ft, cyan up to 25,000 ft, lilac above. Selected aircraft is coral with a trail of recent positions; out of range it becomes an arrow on the edge.
+- **Panels:** hide after 8 s idle; the selected callsign stays next to its marker. Any gesture brings them back. The card moves to the side opposite the selected aircraft so it never covers it.
+- **Alerts:** squawk 7500/7600/7700 or an `emergency` field flashes red, selects the aircraft and beeps. An aircraft entering 10 NM of Franca triggers a "PRÓXIMO" notice.
+- **Military:** readsb `dbFlags`. Military in gold (with a "MILITAR" notice when first seen), "interesting" in magenta.
+- **Details:** callsign, registration, type, full model name, altitude, speed, vertical rate, squawk, track and distance.
+- **Stats:** unique flights today, farthest, highest, most frequent airline and military count. Resets at midnight.
+- **Clock:** after 60 s idle with no aircraft in range, or at night (22:00–07:00), shows time and flights today. Any gesture returns to the radar.
+- **Sounds:** short tick per detent, zoom pitch rises as you zoom in, ding-dong for "PRÓXIMO", siren on emergency (repeats until you tap), low tone when the feed drops. Quiet 22:00–07:00 except emergencies. Sound, zoom and sort are saved.
+- **OTA:** with `OTA_PASSWORD` in `include/secrets.h`, flash over Wi-Fi: `AIRDIAL_OTA_PASSWORD=... pio run -e m5dial-ota -t upload`.
+- **Brightness:** dimmer at night (19:00–06:00, NTP time) and after 3 min idle.
+- **Wi-Fi:** uses `include/secrets.h` or the network already saved on the device. With no connection 60 s after boot, the setup portal opens by itself.
+- **Font:** anti-aliased Source Serif 4 (SIL OFL 1.1), built by `tools/build_fonts.py`.
+- The outer ring shows Wi-Fi/feed state. If the feed fails, the last result stays visible with its data age.
+
+Basemaps ship in the firmware (no online tiles). Map data: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), ODbL. `assets/map_*.png` and `include/map_layers.h` are generated by `tools/build_map.py` from Overpass.
+
+### Simulator
+
+`sim/` compiles the real `src/main.cpp` on your computer (M5GFX + SDL2) and renders every UI state to PNG, or opens an interactive window. See [sim/README.md](sim/README.md).
 
 The feed supplies callsign, registration, type, altitude, speed, heading, and distance when available. Missing fields appear as dashes; not every aircraft broadcasts every field. `r_dst` distance is in nautical miles. HTTPS reads public data without certificate validation; do not send credentials or private data to this endpoint.
 
