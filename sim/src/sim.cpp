@@ -235,7 +235,11 @@ int main(int argc, char** argv) {
   snapshot("32_detail_sort_alt");
   resetState();
   screen = Screen::Stats;
+  timeConfigured = true;
+  sim_hour = 9;
   snapshot("33_stats");
+  timeConfigured = false;
+  sim_hour = -1;
   resetState();
   muted = true;
   snapshot("34_muted_header");

@@ -747,9 +747,14 @@ void drawDetail(lgfx::LGFXBase& d, const Status& st) {
 // ---- Stats screen -----------------------------------------------------------
 void drawStats(lgfx::LGFXBase& d, const Status& st) {
   drawDial(d, st);
-  text("HOJE", 120, 34, MUTED, F_SMALL);
+  struct tm t;
+  char now[24] = "HOJE";
+  if (localTime(t))  // dd/mm/aa · HH:MM (24 h)
+    snprintf(now, sizeof now, "%02d/%02d/%02d · %02d:%02d", t.tm_mday, t.tm_mon + 1, t.tm_year % 100, t.tm_hour,
+             t.tm_min);
+  text(now, 120, 34, MUTED, F_SMALL, middle_center, 150);
   text(String(stats.n), 120, 64, WHITE, F_BIG);
-  text(stats.n == 1 ? "voo único" : "voos únicos", 120, 90, CYAN, F_SMALL);
+  text(stats.n == 1 ? "voo único hoje" : "voos únicos hoje", 120, 90, CYAN, F_SMALL, middle_center, 170);
   d.drawFastHLine(50, 102, 140, PANEL);
   auto row = [&](const char* name, const String& value, int y, int maxW) {
     text(name, 120, y, MUTED, F_SMALL);
@@ -1383,17 +1388,28 @@ void setup() {
   feedMutex = xSemaphoreCreateMutex();
   Serial.printf("Boot heap: free %u, largest %u, sprite %s\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
                 spriteOK ? "ok" : "FAILED");
-  // TLS handshake needs a deep stack; core 0 keeps network work off the UI core.
-  xTaskCreatePinnedToCore(fetchTask, "fetch", 16384, nullptr, 1, &fetchTaskHandle, 0);
+  // Measured peak stack use ~4.2 KB (TLS handshake incl.); 9 KB keeps margin. Core 0 = off the UI core.
+  xTaskCreatePinnedToCore(fetchTask, "fetch", 9216, nullptr, 1, &fetchTaskHandle, 0);
   draw();
   beginWiFi();
   lastEncoder = M5Dial.Encoder.read();
+#ifdef ARDUINO_ARCH_ESP32
+  enableLoopWDT();  // loop() stuck > 5 s -> panic with backtrace on serial
+#endif
 }
 
 void loop() {
   uint32_t now = millis();
   if (lastLoop) maxLoopGap = std::max(maxLoopGap, now - lastLoop);
   lastLoop = now;
+  static uint32_t lastBeat = 0;
+  if (now - lastBeat >= 10000) {  // heartbeat: proves loop() alive, shows UI state
+    Serial.printf("HB t=%lus screen=%d clock=%d fetching=%d free=%u min=%u largest=%u snd=%u fetchStackFree=%u\n",
+                  static_cast<unsigned long>(now / 1000), static_cast<int>(screen), clockActive, fetching,
+                  ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(), static_cast<unsigned>(soundLen),
+                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(fetchTaskHandle)));
+    lastBeat = now;
+  }
   M5Dial.update();
   if (otaStarted) ArduinoOTA.handle();  // blocks for the whole upload; callbacks draw progress
   servicePortal();
