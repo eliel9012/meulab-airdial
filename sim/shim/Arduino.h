@@ -20,6 +20,7 @@
 
 extern uint32_t sim_millis;
 inline uint32_t millis() { return sim_millis; }
+inline uint32_t micros() { return sim_millis * 1000u; }
 inline void delay(uint32_t ms) { sim_millis += ms; }
 
 // Simulated wall clock: hour set by the simulator (-1 = not synced).
@@ -82,6 +83,7 @@ class String {
 
 struct SerialShim {
   void begin(int) {}
+  void print(const char* s) { std::printf("%s", s); }
   void println(const char* s = "") { std::printf("%s\n", s); }
   void println(const String& s) { println(s.c_str()); }
   void printf(const char* fmt, ...) {

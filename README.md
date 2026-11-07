@@ -50,6 +50,7 @@ Se o upload não conectar, desligue USB, segure **G0** no módulo StampS3 atrás
 | Segurar 1,2 s | atualiza agora |
 | Segurar 5 s | abre portal Wi-Fi `MeuLab-AirDial` (192.168.4.1) |
 
+- **Desempenho:** ~25 fps no radar. Anéis, rótulos e cidades vêm gravados no mapa; varredura direto no buffer.
 - **Mapa:** vias reais em azul (mais detalhe a cada zoom), anéis em 1/4, 1/2 e alcance total, cidades e SIMK. Cor da aeronave = altitude: cinza no solo, verde < 10.000 ft, ciano até 25.000 ft, lilás acima. Selecionada em coral, com rastro das últimas posições. Fora do alcance, vira seta na borda.
 - **Painéis:** somem após 8 s sem uso; o indicativo da selecionada fica junto ao marcador. Qualquer gesto traz de volta. O cartão vai para o lado oposto ao voo selecionado, para não cobri-lo.
 - **Alertas:** squawk 7500/7600/7700 ou campo `emergency` pisca em vermelho, seleciona o voo e apita. Voo que entra a menos de 10 NM de Franca gera aviso "PRÓXIMO".
@@ -58,7 +59,7 @@ Se o upload não conectar, desligue USB, segure **G0** no módulo StampS3 atrás
 - **Estatísticas:** voos únicos do dia, mais longe, mais alto, companhia mais frequente e militares. Zera à meia-noite.
 - **Relógio:** após 60 s parado, sem voos no alcance ou à noite (22h–7h), mostra hora e voos do dia. Qualquer gesto volta ao radar.
 - **Sons:** tic curto no giro, tom do zoom sobe ao aproximar, ding-dong para "PRÓXIMO", sirene em emergência (repete até tocar na tela), tom grave quando o feed cai. Silêncio das 22h às 7h, menos emergência. Som, zoom e ordem ficam salvos.
-- **OTA:** com `OTA_PASSWORD` em `include/secrets.h`, grave pelo Wi-Fi: `AIRDIAL_OTA_PASSWORD=... pio run -e m5dial-ota -t upload`.
+- **OTA:** com `OTA_PASSWORD` em `include/secrets.h`, grave pelo Wi-Fi: `AIRDIAL_IP=<ip> AIRDIAL_OTA_PASSWORD=... pio run -e m5dial-ota -t upload`. O IP aparece no serial ao ligar (`OTA ready: <ip>`).
 - **Brilho:** menor à noite (19h–6h, horário por NTP) e após 3 min sem uso.
 - **Wi-Fi:** usa `include/secrets.h` ou a rede já salva no aparelho. Sem conexão por 60 s após ligar, abre o portal de configuração sozinho.
 - **Fonte:** Source Serif 4 (SIL OFL 1.1) suavizada, gerada por `tools/build_fonts.py`.
@@ -139,6 +140,7 @@ If upload cannot connect, unplug USB, hold **G0** on the StampS3 module behind t
 | Hold 1.2 s | refresh now |
 | Hold 5 s | open Wi-Fi portal `MeuLab-AirDial` (192.168.4.1) |
 
+- **Performance:** ~25 fps radar. Rings, labels and towns are baked into the map; the sweep writes straight to the frame buffer.
 - **Map:** real roads in blue (more detail per zoom level), rings at 1/4, 1/2 and full range, towns and SIMK. Aircraft color = altitude: gray on ground, green < 10,000 ft, cyan up to 25,000 ft, lilac above. Selected aircraft is coral with a trail of recent positions; out of range it becomes an arrow on the edge.
 - **Panels:** hide after 8 s idle; the selected callsign stays next to its marker. Any gesture brings them back. The card moves to the side opposite the selected aircraft so it never covers it.
 - **Alerts:** squawk 7500/7600/7700 or an `emergency` field flashes red, selects the aircraft and beeps. An aircraft entering 10 NM of Franca triggers a "PRÓXIMO" notice.
@@ -147,7 +149,7 @@ If upload cannot connect, unplug USB, hold **G0** on the StampS3 module behind t
 - **Stats:** unique flights today, farthest, highest, most frequent airline and military count. Resets at midnight.
 - **Clock:** after 60 s idle with no aircraft in range, or at night (22:00–07:00), shows time and flights today. Any gesture returns to the radar.
 - **Sounds:** short tick per detent, zoom pitch rises as you zoom in, ding-dong for "PRÓXIMO", siren on emergency (repeats until you tap), low tone when the feed drops. Quiet 22:00–07:00 except emergencies. Sound, zoom and sort are saved.
-- **OTA:** with `OTA_PASSWORD` in `include/secrets.h`, flash over Wi-Fi: `AIRDIAL_OTA_PASSWORD=... pio run -e m5dial-ota -t upload`.
+- **OTA:** with `OTA_PASSWORD` in `include/secrets.h`, flash over Wi-Fi: `AIRDIAL_IP=<ip> AIRDIAL_OTA_PASSWORD=... pio run -e m5dial-ota -t upload`. The IP is printed on serial at boot (`OTA ready: <ip>`).
 - **Brightness:** dimmer at night (19:00–06:00, NTP time) and after 3 min idle.
 - **Wi-Fi:** uses `include/secrets.h` or the network already saved on the device. With no connection 60 s after boot, the setup portal opens by itself.
 - **Font:** anti-aliased Source Serif 4 (SIL OFL 1.1), built by `tools/build_fonts.py`.

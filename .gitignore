@@ -5,3 +5,5 @@ include/secrets.h
 # airline logos: trademarked images, generated locally by tools/build_logos.py (not redistributed)
 include/airline_logos.h
 assets/logos/
+assets/map_*_baked.png
+__pycache__/

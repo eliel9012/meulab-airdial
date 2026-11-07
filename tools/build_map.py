@@ -190,10 +190,81 @@ HEADER_PREAMBLE = [
 ]
 
 
+# ---------------------------------------------------------------- static overlay
+# Range rings, ring labels, towns and home are baked into the firmware maps so the
+# device does not redraw ~80 halo'd text passes every frame. Mirrors the firmware
+# layout (src/main.cpp drawRadar); keep PLACES in sync with what you want labelled.
+PLACES = [  # name, lat, lon, airport, labelled at this range (NM) or closer
+    ("SIMK", -20.5922, -47.3829, True, 20),
+    ("UBERABA", -19.7472, -47.9381, False, 160),
+    ("RIB. PRETO", -21.1775, -47.8103, False, 160),
+    ("BATATAIS", -20.8911, -47.5850, False, 80),
+    ("IBIRACI", -20.4611, -47.1219, False, 40),
+    ("PATROCINIO", -20.6394, -47.2817, False, 40),
+    ("CRISTAIS", -20.4033, -47.4200, False, 20),
+]
+
+
+def rgb(c565):
+    r, g, b = c565 >> 11, (c565 >> 5) & 63, c565 & 31
+    return (r << 3 | r >> 2, g << 2 | g >> 4, b << 3 | b >> 2)
+
+
+GRID, MUTED, WHITE, BG_RGB = rgb(0x1A6B), rgb(0x9473), rgb(0xF7BE), rgb(0x0864)
+
+
+def overlay(img, level):
+    sys.path.insert(0, str(ROOT / "tools"))
+    import build_fonts  # noqa: E402  (our own module, same folder)
+    name, ttf, size, gamma, gain = build_fonts.FONTS[3][:5]
+    assert name == "SERIF_13"
+    font = build_fonts.decode_vlw(build_fonts.build_vlw(ttf, size, gamma, gain, False)[0])
+    img = img.convert("RGB")
+    draw = ImageDraw.Draw(img)
+    for r in (96, 48, 24):
+        draw.ellipse((120 - r, 120 - r, 120 + r, 120 + r), outline=GRID)
+    draw.line((24, 120, 215, 120), fill=GRID)
+    draw.line((120, 24, 120, 215), fill=GRID)
+
+    def text(s, x, y, color, datum):
+        w, h = build_fonts.text_width(font, s), font["height"]
+        dx = {"c": -w // 2, "l": 0, "r": -w}[datum[1]]
+        dy = {"m": -h // 2, "t": 0, "b": -h}[datum[0]]
+        for oy in (-1, 0, 1):
+            for ox in (-1, 0, 1):
+                if ox or oy:
+                    build_fonts.draw_text(img, x + dx + ox, y + dy + oy, s, font, BG_RGB)
+        build_fonts.draw_text(img, x + dx, y + dy, s, font, color)
+
+    nm = lambda v: str(round(v))  # noqa: E731
+    text(nm(level / 4), 144, 115, MUTED, "bc")
+    text(nm(level / 2), 168, 115, MUTED, "bc")
+    text(nm(level) + " NM", 26, 115, MUTED, "bl")
+    ppn = px_per_nm(level)
+    for pname, lat, lon, airport, max_range in PLACES:
+        if level > max_range:
+            continue
+        x = 120 + round((lon - LON) * 56.2 * ppn)
+        y = 120 - round((lat - LAT) * 60.0 * ppn)
+        if (x - 120) ** 2 + (y - 120) ** 2 > 100 ** 2:
+            continue
+        if airport:
+            draw.rectangle((x - 2, y - 2, x + 2, y + 2), outline=MUTED)
+        else:
+            draw.ellipse((x - 2, y - 2, x + 2, y + 2), fill=MUTED)
+        text(pname, x, y + 9, MUTED, "mc")
+    draw.ellipse((117, 117, 123, 123), fill=WHITE)
+    text("FRANCA", 114, 129, WHITE, "tr")
+    return img
+
+
 def write_layers_header(levels=LEVELS):
     lines = list(HEADER_PREAMBLE) + ["#ifndef PROGMEM", "#define PROGMEM", "#endif"]
     for level in levels:
-        lines += array_lines(f"MAP_RGB565_{level}", rgb565_values(ROOT / "assets" / f"map_{level}.png"))
+        baked = overlay(Image.open(ROOT / "assets" / f"map_{level}.png"), level)
+        out = ROOT / "assets" / f"map_{level}_baked.png"
+        baked.save(out, optimize=True)
+        lines += array_lines(f"MAP_RGB565_{level}", rgb565_values(out))
     LAYERS_HEADER.parent.mkdir(parents=True, exist_ok=True)
     LAYERS_HEADER.write_text("\n".join(lines) + "\n")
     print(LAYERS_HEADER, LAYERS_HEADER.stat().st_size, "bytes")

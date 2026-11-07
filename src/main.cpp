@@ -64,24 +64,7 @@ constexpr uint16_t SPECIAL = 0xEA9A;   // "interesting" (dbFlags bit 1): magenta
 constexpr float RANGES[] = {160, 80, 40, 20};
 constexpr size_t ZOOMS = sizeof(RANGES) / sizeof(RANGES[0]);
 const uint16_t* const MAPS[ZOOMS] = {MAP_RGB565_160, MAP_RGB565_80, MAP_RGB565_40, MAP_RGB565_20};
-constexpr float HOME_LAT = -20.512504f, HOME_LON = -47.400830f;
-constexpr float NM_PER_DEG_LAT = 60.0f, NM_PER_DEG_LON = 56.2f;  // matches build_map.py
-
-struct Place {
-  const char* name;
-  float lat, lon;
-  bool airport;
-  float maxRange;  // only labelled at this zoom range or closer
-};
-const Place PLACES[] = {
-  {"SIMK", -20.5922f, -47.3829f, true, 20},
-  {"UBERABA", -19.7472f, -47.9381f, false, 160},
-  {"RIB. PRETO", -21.1775f, -47.8103f, false, 160},
-  {"BATATAIS", -20.8911f, -47.5850f, false, 80},
-  {"IBIRACI", -20.4611f, -47.1219f, false, 40},
-  {"PATROCINIO", -20.6394f, -47.2817f, false, 40},
-  {"CRISTAIS", -20.4033f, -47.4200f, false, 20},
-};
+// Rings, ring labels, towns and home are baked into the maps (tools/build_map.py).
 
 struct TrailPt {
   int16_t d10;  // distance, 0.1 NM
@@ -363,11 +346,6 @@ void polarToXY(float distNm, float bearingDeg, int& x, int& y) {
   y = 120 - lroundf(cosf(a) * r);
 }
 
-void geoToXY(float lat, float lon, int& x, int& y) {
-  x = 120 + lroundf((lon - HOME_LON) * NM_PER_DEG_LON * pxPerNm());
-  y = 120 - lroundf((lat - HOME_LAT) * NM_PER_DEG_LAT * pxPerNm());
-}
-
 bool inRange(const Aircraft& p) { return p.distance >= 0 && p.bearing >= 0 && p.distance <= range(); }
 
 void showBanner(const String& msg, uint16_t color, uint32_t ms) {
@@ -427,14 +405,41 @@ void serviceSound() {
   soundNextAt = millis() + n.ms + n.gap;
 }
 
+// ---- Frame profiler (averages printed in the heartbeat) ----------------------
+enum Prof { P_MAP, P_SWEEP, P_RINGS, P_PLANES, P_PANELS, P_PUSH, P_TOTAL, P_N };
+uint32_t profSum[P_N] = {}, profFrames = 0, profT = 0;
+inline void profMark(Prof p) { uint32_t t = micros(); profSum[p] += t - profT; profT = t; }
+
 // ---- Radar drawing ----------------------------------------------------------
-// Fading sweep: tints map pixels inside a 40 deg wedge trailing the beam.
+// atan2 approximation (max error ~0.3 deg), ~10x cheaper than atan2f.
+float fastAtan2(float y, float x) {
+  float ax = fabsf(x), ay = fabsf(y), mx = std::max(ax, ay);
+  if (mx == 0) return 0;
+  float a = std::min(ax, ay) / mx, s = a * a;
+  float r = ((-0.0464964749f * s + 0.15931422f) * s - 0.327622764f) * s * a + a;
+  if (ay > ax) r = 1.57079637f - r;
+  if (x < 0) r = 3.14159274f - r;
+  return y < 0 ? -r : r;
+}
+
+// Fading sweep: tints map pixels in a wedge trailing the beam. Works straight on
+// the sprite buffer (byte-swapped RGB565) with integer blending: ~35 ms -> ~3 ms.
 void drawSweep(lgfx::LGFXBase& d) {
   if (!spriteOK) return;
-  constexpr float WIDTH = 70.0f, R = 96.0f;
+  constexpr float WIDTH = 70.0f;
+  constexpr int R = 96;
   constexpr uint16_t TINT = 0x2EF5;  // green-cyan
+  // alpha = f^3 * 0.4 (f = 1 - behind/WIDTH) in 1/32 steps; 0 beyond ~46 deg.
+  static uint8_t alpha[71];
+  static int cutoff = 0;
+  if (!cutoff) {
+    for (int i = 0; i <= 70; ++i) {
+      float f = 1.0f - i / WIDTH;
+      alpha[i] = static_cast<uint8_t>(lroundf(f * f * f * 0.40f * 32));
+      if (alpha[i]) cutoff = i;
+    }
+  }
   float lead = fmodf(millis() * 0.09f, 360.0f);  // 4 s per turn
-  // Bounding box of the wedge: center, both edges, and any axis crossed.
   float minX = 0, maxX = 0, minY = 0, maxY = 0;
   auto extend = [&](float deg) {
     float a = deg * DEG_TO_RAD, x = sinf(a) * R, y = -cosf(a) * R;
@@ -442,20 +447,30 @@ void drawSweep(lgfx::LGFXBase& d) {
     minY = std::min(minY, y); maxY = std::max(maxY, y);
   };
   extend(lead);
-  extend(lead - WIDTH);
+  extend(lead - cutoff);
   for (int axis = 0; axis < 720; axis += 90)
-    if (axis - 360 < lead && axis - 360 > lead - WIDTH) extend(axis - 360);
-    else if (axis < lead && axis > lead - WIDTH) extend(axis);
+    if (axis - 360 < lead && axis - 360 > lead - cutoff) extend(axis - 360);
+    else if (axis < lead && axis > lead - cutoff) extend(axis);
+  uint16_t* buf = static_cast<uint16_t*>(canvas->getBuffer());
+  const int tr = TINT >> 11, tg = (TINT >> 5) & 63, tb = TINT & 31;
   for (int y = int(minY); y <= int(maxY); ++y) {
+    uint16_t* row = buf + (120 + y) * 240 + 120;
     for (int x = int(minX); x <= int(maxX); ++x) {
       if (x * x + y * y > R * R || (x == 0 && y == 0)) continue;
-      float theta = atan2f(x, -y) * RAD_TO_DEG;
-      float behind = fmodf(lead - theta + 720.0f, 360.0f);
-      if (behind > WIDTH) continue;
-      float f = 1.0f - behind / WIDTH;
-      float alpha = f * f * f * 0.40f;
-      int px = 120 + x, py = 120 + y;
-      d.drawPixel(px, py, blend565(d.readPixel(px, py), TINT, alpha));
+      float behind = lead - fastAtan2(float(x), float(-y)) * RAD_TO_DEG;
+      if (behind < 0) behind += 360.0f;   // theta in (-180, 180], lead in [0, 360)
+      if (behind >= 360.0f) behind -= 360.0f;
+      if (behind > cutoff) continue;
+      int a = alpha[static_cast<int>(behind)];
+      if (!a) continue;
+      uint16_t c = row[x];
+      c = static_cast<uint16_t>((c << 8) | (c >> 8));  // to native RGB565
+      int r = c >> 11, g = (c >> 5) & 63, b = c & 31;
+      r += ((tr - r) * a) >> 5;
+      g += ((tg - g) * a) >> 5;
+      b += ((tb - b) * a) >> 5;
+      c = static_cast<uint16_t>((r << 11) | (g << 5) | b);
+      row[x] = static_cast<uint16_t>((c << 8) | (c >> 8));
     }
   }
   float a = lead * DEG_TO_RAD;
@@ -517,36 +532,10 @@ void planeMarker(lgfx::LGFXBase& d, const Aircraft& p, bool active) {
   else arrowAt(d, x, y, heading, active ? 7 : 5, color, false);
 }
 
-void drawPlaces(lgfx::LGFXBase& d) {
-  for (const auto& pl : PLACES) {
-    if (range() > pl.maxRange) continue;
-    int x, y;
-    geoToXY(pl.lat, pl.lon, x, y);
-    int dx = x - 120, dy = y - 120;
-    if (dx * dx + dy * dy > 100 * 100) continue;
-    if (pl.airport) d.drawRect(x - 2, y - 2, 5, 5, MUTED);
-    else d.fillCircle(x, y, 2, MUTED);
-    textHalo(pl.name, x, y + 9, MUTED, F_SMALL);
-  }
-  // Home (receiver) at center.
-  d.fillCircle(120, 120, 3, WHITE);
-  textHalo("FRANCA", 114, 129, WHITE, F_SMALL, top_right);
-}
-
+// Only the status ring is dynamic; grid rings and labels are baked into the map.
 void drawRings(lgfx::LGFXBase& d, uint16_t status) {
   d.drawCircle(120, 120, 117, status);
   d.drawCircle(120, 120, 116, status);
-  d.drawCircle(120, 120, 96, GRID);
-  d.drawCircle(120, 120, 48, GRID);
-  d.drawCircle(120, 120, 24, GRID);
-  d.drawFastHLine(24, 120, 192, GRID);
-  d.drawFastVLine(120, 24, 192, GRID);
-  float r = range();
-  auto nm = [](float v) { return String(static_cast<int>(lroundf(v))); };
-  // Labels sit on the ring crossings of the horizontal axis.
-  textHalo(nm(r / 4), 120 + 24, 115, MUTED, F_SMALL, bottom_center);
-  textHalo(nm(r / 2), 120 + 48, 115, MUTED, F_SMALL, bottom_center);
-  textHalo(nm(r) + " NM", 120 - 96 + 2, 115, MUTED, F_SMALL, bottom_left);
 }
 
 struct Status {
@@ -635,8 +624,11 @@ void drawEmptyCard(lgfx::LGFXBase& d) {
 void drawRadar(lgfx::LGFXBase& d, const Status& st) {
   // rgb565_t: header holds native RGB565; plain uint16_t* is read as byte-swapped.
   d.pushImage(0, 0, 240, 240, reinterpret_cast<const lgfx::rgb565_t*>(MAPS[zoom]));
+  profMark(P_MAP);
   drawSweep(d);
+  profMark(P_SWEEP);
   drawRings(d, st.color);
+  profMark(P_RINGS);
 
   size_t onMap = 0;
   for (size_t i = 0; i < count; ++i) {
@@ -644,7 +636,7 @@ void drawRadar(lgfx::LGFXBase& d, const Status& st) {
     drawTrail(d, planes[i], i == selected ? RED : markerColor(planes[i]));
   }
   for (size_t i = 0; i < count; ++i) if (i != selected) planeMarker(d, planes[i], false);
-  drawPlaces(d);
+  profMark(P_PLANES);
   if (count) planeMarker(d, planes[selected], true);
 
   bool hidden = millis() - lastInput > PANEL_HIDE_MS && millis() > bannerUntil && !refreshing && !portal &&
@@ -815,6 +807,9 @@ void drawOta(lgfx::LGFXBase& d) {
 }
 
 void draw() {
+  uint32_t t0 = micros();
+  profT = t0;
+  lastDraw = millis();  // frame period counts from frame start
   auto& d = gfx();
   Status st = status();
   clockActive = false;
@@ -830,8 +825,11 @@ void draw() {
     if (clockActive) drawClock(d, st, onMap);
     else drawRadar(d, st);
   }
+  profMark(P_PANELS);
   if (spriteOK) canvas->pushSprite(0, 0);
-  lastDraw = millis();
+  profMark(P_PUSH);
+  profSum[P_TOTAL] += micros() - t0;
+  ++profFrames;
 }
 
 // ---- Wi-Fi ------------------------------------------------------------------
@@ -876,6 +874,7 @@ void startOTA() {
   if (otaStarted || !strlen(OTA_PASSWORD)) return;
   ArduinoOTA.setHostname("meulab-airdial");
   ArduinoOTA.setPassword(OTA_PASSWORD);
+  ArduinoOTA.setMdnsEnabled(false);  // mDNS task + buffers cost heap TLS needs; upload by IP
   ArduinoOTA.onStart([] { otaPct = 0; draw(); });
   ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
     int pct = total ? static_cast<int>(done * 100ULL / total) : 0;
@@ -888,7 +887,7 @@ void startOTA() {
   });
   ArduinoOTA.begin();
   otaStarted = true;
-  Serial.println("OTA ready: meulab-airdial.local");
+  Serial.printf("OTA ready: %s\n", WiFi.localIP().toString().c_str());
 #endif
 }
 
@@ -1408,6 +1407,14 @@ void loop() {
                   static_cast<unsigned long>(now / 1000), static_cast<int>(screen), clockActive, fetching,
                   ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(), static_cast<unsigned>(soundLen),
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(fetchTaskHandle)));
+    if (profFrames) {
+      static const char* const N[] = {"map", "sweep", "rings", "planes", "panels", "push", "TOTAL"};
+      Serial.print("PROF ms/frame:");
+      for (int i = 0; i < P_N; ++i) Serial.printf(" %s=%.1f", N[i], profSum[i] / 1000.0f / profFrames);
+      Serial.printf(" frames=%u\n", static_cast<unsigned>(profFrames));
+      memset(profSum, 0, sizeof profSum);
+      profFrames = 0;
+    }
     lastBeat = now;
   }
   M5Dial.update();
@@ -1438,7 +1445,7 @@ void loop() {
     draw();
   }
   updateBrightness();
-  uint32_t frameMs = clockActive ? 1000u : (screen == Screen::Radar ? 100u : 500u);
+  uint32_t frameMs = clockActive ? 1000u : (screen == Screen::Radar ? 40u : 500u);  // radar ~25 fps
   if (dirty || millis() - lastDraw > frameMs) {
     dirty = false;
     draw();
