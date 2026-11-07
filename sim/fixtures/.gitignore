@@ -1,0 +1,2 @@
+# sim/.gitignore ignores aircraft.json; keep the frozen fixture tracked.
+!aircraft.json
